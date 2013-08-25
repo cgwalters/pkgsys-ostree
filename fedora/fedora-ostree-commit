@@ -17,14 +17,19 @@
 # Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 # Boston, MA 02111-1307, USA.
 
+osname=fedora
+releasever=19
+compstarget=core
+
 srcdir=$(dirname $0)
 builddir=$(pwd)
-releasever=19
-name=fedora-ostree-${releasever}
+
+name=${osname}-${releasever}
+ostreeref=${osname}/${releasever}/${compstarget}
+repo=$(pwd)/repo
 prefix=$(pwd)/${name}
 yumroot=${prefix}.yum
 targetroot=${prefix}.root
-output=${name}.tar.gz
 yumcachedir=${yumroot}/var/cache/yum
 yumcache_lookaside=${prefix}.yum-cache
 logs_lookaside=${prefix}.logs
@@ -37,7 +42,7 @@ if test -d ${yumcache_lookaside}; then
     mkdir -p ${yumroot}/var/cache/
     cp -a ${yumcache_lookaside} ${yumcachedir}
 fi
-yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install systemd passwd yum ostree fedora-release vim-minimal kernel dracut e2fsprogs less
+yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install @{compstarget} ostree
 if test "${mfotbreak}" = "post-yum"; then
     bash
 fi
@@ -119,7 +124,7 @@ rm "${logs_lookaside}" -rf
 mkdir -p "${logs_lookaside}"
 mv ${yumroot}/var/log/* ${logs_lookaside}
 
-tar -c -z -C ${targetroot} -f ${output} .
-echo "Generated ${output}"
+ostree --repo=${builddir}/${repo} commit --table-output -b ${ostreeref} -s commit --tree=dir=${targetroot}
+
 rm ${yumroot} -rf
 rm ${targetroot} -rf
