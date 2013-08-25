@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# Copyright (C) 2012,2013 Colin Walters <walters@verbum.org>
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the
+# Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+
+srcdir=$(dirname $0)
+builddir=$(pwd)
+releasever=19
+name=fedora-ostree-${releasever}
+prefix=$(pwd)/${name}
+yumroot=${prefix}.yum
+targetroot=${prefix}.root
+output=${name}.tar.gz
+yumcachedir=${yumroot}/var/cache/yum
+yumcache_lookaside=${prefix}.yum-cache
+logs_lookaside=${prefix}.logs
+
+set -x
+set -e
+
+rm ${yumroot} -rf
+if test -d ${yumcache_lookaside}; then
+    mkdir -p ${yumroot}/var/cache/
+    cp -a ${yumcache_lookaside} ${yumcachedir}
+fi
+yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install systemd passwd yum ostree fedora-release vim-minimal kernel dracut e2fsprogs less
+if test "${mfotbreak}" = "post-yum"; then
+    bash
+fi
+
+# Now make an empty "real" root
+rm ${targetroot} -rf
+mkdir ${targetroot}
+cd ${targetroot}
+
+for d in dev proc run sys var; do
+    mkdir $d
+done
+
+# Special ostree mount
+mkdir sysroot
+
+# Some FHS targets; these all live in /var
+ln -s var/opt opt
+ln -s var/srv srv
+ln -s var/mnt mnt
+ln -s var/roothome root
+
+# This one is dynamic, so just lives in /run
+ln -s run/media media
+
+# Special OSTree link, so it's /ostree both on
+# the real disk and inside the chroot.
+ln -s sysroot/ostree ostree
+
+# /tmp is always /sysroot/tmp
+ln -s sysroot/tmp tmp
+
+# By default, /home -> var/home -> ../sysroot/home
+ln -s var/home home
+
+# These are the only directories we take from the Fedora build
+mv ${yumroot}/usr .
+# Except /usr/local -> ../var/usrlocal
+rm usr/local -rf
+ln -s ../var/usrlocal usr/local
+# And /etc -> /usr/etc
+rm usr/etc -rf
+mv ${yumroot}/etc usr/etc
+
+# Move boot, but rename the kernel/initramfs to have a checksum
+mv ${yumroot}/boot .
+kernel=$(ls boot/vmlinuz-3*)
+initramfs=$(ls boot/initramfs-3*)
+bootcsum=$(cat ${kernel} ${initramfs} | sha256sum | cut -f 1 -d ' ')
+mv ${kernel} ${kernel}-${bootcsum}
+mv ${initramfs} ${initramfs}-${bootcsum}
+
+# Also move the toplevel compat links
+mv ${yumroot}/lib .
+if test -L ${yumroot}/lib64; then
+    mv ${yumroot}/lib64 .
+fi
+mv ${yumroot}/bin .
+mv ${yumroot}/sbin .
+
+mkdir -p usr/lib/tmpfiles.d
+cp ${srcdir}/tmpfiles-gnome-ostree.conf usr/lib/tmpfiles.d
+
+# Ok, let's globally fix permissions in the Fedora content;
+# everything is root owned, all directories are u=rwx,g=rx,og=rx.
+chown -R -h 0:0 usr boot
+for x in usr boot; do
+    find $x -type d -exec chmod u=rwx,g=rx,og=rx "{}" \;
+done
+
+cd ${builddir}
+
+# Attempt to cache stuff between runs
+rm ${yumcache_lookaside} -rf
+mv ${yumcachedir} ${yumcache_lookaside}
+
+# And move the log files out
+rm "${logs_lookaside}" -rf
+mkdir -p "${logs_lookaside}"
+mv ${yumroot}/var/log/* ${logs_lookaside}
+
+tar -c -z -C ${targetroot} -f ${output} .
+echo "Generated ${output}"
+rm ${yumroot} -rf
+rm ${targetroot} -rf

@@ -1,0 +1,5 @@
+[fedora-ostree]
+name=OSTree for Fedora $releasever - $basearch
+baseurl=http://fedorapeople.org/~walters/fedora-ostree-f19-$basearch/
+gpgcheck=0
+enabled=1
