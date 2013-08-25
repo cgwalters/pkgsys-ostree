@@ -36,13 +36,13 @@ PKG_CHECK_MODULES(PKGDEP_OSTREE, [ostree-1])
 GTK_DOC_CHECK([1.15], [--flavour no-tmpl])
 AC_PATH_PROG([XSLTPROC], [xsltproc])
 
-AC_ARG_WITH([overgrown-wget-wrapper],
-            AS_HELP_STRING([--with-overgrown-wget-wrapper=BACKEND], [Choose BACKEND as package system (currently supported: yum)]),
+AC_ARG_WITH([backend],
+            AS_HELP_STRING([--with-backend=BACKEND], [Choose BACKEND as package system (currently supported: yum)]),
             [],
-            AC_MSG_ERROR([--with-overgrown-wget-wrapper=BACKEND must be provided]))
-AS_IF([test x$with_overgrown_wget_wrapper = xyum], [],
-  [ AC_MSG_ERROR([Unrecognized --with-overgrown-wget-wrapper=$with_overgrown_wget_wrapper])])
-AM_CONDITIONAL(BUILDOPT_YUM, test x$with_overgrown_wget_wrapper = xyum)
+            AC_MSG_ERROR([--with-backend=BACKEND must be provided]))
+AS_IF([test x$with_backend = xyum], [],
+  [ AC_MSG_ERROR([Unrecognized --with-backend=$with_backend])])
+AM_CONDITIONAL(BUILDOPT_BACKEND_YUM, test x$with_backend = xyum)
 
 AC_ARG_WITH([systemdsystemunitdir],
             AS_HELP_STRING([--with-systemdsystemunitdir=DIR], [Directory for systemd service files]),

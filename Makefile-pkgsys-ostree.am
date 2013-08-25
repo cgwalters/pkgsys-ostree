@@ -24,7 +24,13 @@ pkgsys_ostree_SOURCES = src/main/main.c \
 	src/main/pkgsys-ostree-builtins.h \
 	src/main/pkgsys-ostree-main.h \
 	src/main/pkgsys-ostree-main.c \
+	src/main/pkgsys-ostree-backend.h \
+	src/main/pkgsys-ostree-backend.c \
 	$(NULL)
+
+if BUILDOPT_BACKEND_YUM
+pkgsys_ostree_SOURCES += src/main/pkgsys-ostree-backend-yum.c src/main/pkgsys-ostree-backend-yum.h
+endif
 
 pkgsys_ostree_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/src/libgsystem -I$(srcdir)/src/pkgsys-ostree $(PKGDEP_OSTREE_CFLAGS)
 pkgsys_ostree_LDADD = libgsystem.la $(PKGDEP_OSTREE_LIBS)

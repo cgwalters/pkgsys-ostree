@@ -141,7 +141,7 @@ pkgsys_ostree_run (int    argc,
             }
           else if (cmd == NULL && g_str_equal (argv[in], "--version"))
             {
-              g_print ("%s\n", PACKAGE_STRING);
+              g_print ("%s\n", PACKAGE_NAME);
               return 0;
             }
           else if (cmd == NULL)
@@ -214,7 +214,7 @@ pkgsys_ostree_run (int    argc,
       goto out;
     }
 
-  g_set_prgname (g_strdup_printf ("ostree %s", cmd));
+  g_set_prgname (g_strdup_printf (PACKAGE_NAME " %s", cmd));
 
   if (repo == NULL && !want_help &&
       !(command->flags & PKGSYS_OSTREE_BUILTIN_FLAG_NO_REPO))
