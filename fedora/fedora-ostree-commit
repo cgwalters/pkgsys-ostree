@@ -17,9 +17,14 @@
 # Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 # Boston, MA 02111-1307, USA.
 
+set -e
+
 osname=fedora
 releasever=19
-compstarget=core
+
+compstarget=$1
+test -n "${compstarget}" || (echo "usage: $0 COMPSTARGET" 1>&2; exit 1)
+shift
 
 srcdir=$(dirname $0)
 builddir=$(pwd)
@@ -35,17 +40,20 @@ yumcache_lookaside=${prefix}.yum-cache
 logs_lookaside=${prefix}.logs
 
 set -x
-set -e
 
 rm ${yumroot} -rf
 if test -d ${yumcache_lookaside}; then
     mkdir -p ${yumroot}/var/cache/
     cp -a ${yumcache_lookaside} ${yumcachedir}
 fi
-yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install @{compstarget} ostree
+yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install @{compstarget} kernel ostree
 if test "${mfotbreak}" = "post-yum"; then
     bash
 fi
+
+# Attempt to cache stuff between runs
+rm ${yumcache_lookaside} -rf
+mv ${yumcachedir} ${yumcache_lookaside}
 
 # Now make an empty "real" root
 rm ${targetroot} -rf
@@ -115,16 +123,17 @@ done
 
 cd ${builddir}
 
-# Attempt to cache stuff between runs
-rm ${yumcache_lookaside} -rf
-mv ${yumcachedir} ${yumcache_lookaside}
-
-# And move the log files out
+# Move the log files out
 rm "${logs_lookaside}" -rf
 mkdir -p "${logs_lookaside}"
 mv ${yumroot}/var/log/* ${logs_lookaside}
 
-ostree --repo=${builddir}/${repo} commit --table-output -b ${ostreeref} -s commit --tree=dir=${targetroot}
+# To make SELinux work, we need to do the labeling right before this.
+# This really needs some sort of API, so we can apply the xattrs as
+# we're committing into the repo, rather than having to label the
+# physical FS.
+# For now, no xattrs (and hence no SELinux =( )
+ostree --repo=${repo} commit --table-output -b ${ostreeref} -s nosubject --no-xattrs --tree=dir=${targetroot}
 
 rm ${yumroot} -rf
 rm ${targetroot} -rf
