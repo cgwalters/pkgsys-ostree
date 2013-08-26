@@ -46,7 +46,7 @@ if test -d ${yumcache_lookaside}; then
     mkdir -p ${yumroot}/var/cache/
     cp -a ${yumcache_lookaside} ${yumcachedir}
 fi
-yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install @{compstarget} kernel ostree
+yum -c ${srcdir}/fedora-ostree.repo -y --releasever=${releasever} --nogpg --installroot=${yumroot} --disablerepo='*' --enablerepo=fedora --enablerepo=fedora-ostree install @${compstarget} kernel ostree
 if test "${mfotbreak}" = "post-yum"; then
     bash
 fi
