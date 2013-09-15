@@ -77,10 +77,10 @@ def _initfs(targetroot):
 
 def _clone_current_root_to_yumroot(current_root, yumroot):
     _initfs(yumroot)
-    subprocess.check_call(['cp', '--reflink=auto', '-a',
-                           os.path.join(current_root, 'usr'),
-                           yumroot])
-                           
+    for d in ['usr', 'etc', 'var']:
+        subprocess.check_call(['cp', '--reflink=auto', '-a',
+                               os.path.join(current_root, d),
+                               yumroot])
 
 def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
@@ -170,10 +170,6 @@ def main():
         print >>sys.stderr, "Unknown action %s" % (action, )
         sys.exit(1)
 
-    # Hardcoded, yes.
-    packages.append('kernel')
-    packages.append(opts.local_ostree_package)
-
     if opts.repo_path is not None:
         repo = OSTree.Repo.new(Gio.File.new_for_path(opts.repo_path))
     else:
@@ -189,8 +185,6 @@ def main():
     yumcachedir = os.path.join(yumroot, 'var/cache/yum')
     yumcache_lookaside = os.path.join(cachedir, 'yum-cache')
     logs_lookaside = os.path.join(cachedir, 'logs')
-
-    print "Will create commit %s using packages %r" % (ref, packages)
 
     shutil.rmtree(yumroot, ignore_errors=True)
     if action == 'create':
@@ -209,6 +203,9 @@ def main():
     if action == 'create':
         yumargs = ['yum', '-y', '--releasever=%s' % (os_release_data['VERSION_ID'], ), '--nogpg', '--setopt=keepcache=1',
                 '--installroot=' + yumroot, '--disablerepo=*', '--enablerepo=fedora', 'install']
+        # Hardcoded, yes.
+        packages.append('kernel')
+        packages.append(opts.local_ostree_package)
     elif action == 'upgrade':
         yumargs = ['yum', '--installroot=' + yumroot, 'upgrade']
     elif action == 'install':
@@ -263,5 +260,3 @@ def main():
     rmrf(targetroot)
 
     subprocess.check_call(['ostree', 'admin', 'deploy', '--os=' + os_release_data['ID'], ref])
-
-main()

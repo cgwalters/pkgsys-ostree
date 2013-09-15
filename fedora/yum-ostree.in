@@ -26,6 +26,6 @@ __builtin__.__dict__['PKGLIBDIR'] = "@pkglibdir@"
 path = os.path.join('@pkglibdir@', 'yum-ostree')
 sys.path.insert(0, path)
 
-from yumostree import yumostree
+import yumostree
 
-sys.exit(yumostree.main(sys.argv))
+sys.exit(yumostree.main())
