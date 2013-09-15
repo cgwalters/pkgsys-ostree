@@ -63,8 +63,29 @@ include src/libgsystem/Makefile-libgsystem.am
 noinst_LTLIBRARIES += libgsystem.la
 
 include Makefile-pkgsys-ostree.am
+include Makefile-fedora.am
 
 install-data-hook: $(INSTALL_DATA_HOOKS)
 
 release-tag:
 	git tag -m "Release $(VERSION)" v$(VERSION)
+
+git_version_rpm = $$(git describe | sed -e 's,-,\.,g' -e 's,^v,,')
+
+dist-snapshot:
+	set -x; \
+	GITVERSION=$(git_version_rpm); export GITVERSION; \
+	TARFILE_TMP=$(PACKAGE)-$${GITVERSION}.tar.tmp; \
+	REV=$$(git rev-parse HEAD); \
+	echo "Archiving $(PACKAGE) at $${REV}"; \
+	(cd $(srcdir); git archive --format=tar --prefix=$(PACKAGE)-$${GITVERSION}/ $${REV}) > $${TARFILE_TMP}; \
+	(cd $$(git rev-parse --show-toplevel); git submodule status) | while read line; do \
+	  rev=$$(echo $$line | cut -f 1 -d ' '); path=$$(echo $$line | cut -f 2 -d ' '); \
+	  echo "Archiving $${path} at $${rev}"; \
+	  (cd $(srcdir)/$$path; git archive --format=tar --prefix=$(PACKAGE)-$${GITVERSION}/$$path/ $${rev}) > submodule.tar; \
+	  tar -A -f $${TARFILE_TMP} submodule.tar; \
+	  rm submodule.tar; \
+	done; \
+	mv $(PACKAGE)-$${GITVERSION}.tar{.tmp,}; \
+	xz $(PACKAGE)-$${GITVERSION}.tar 
+

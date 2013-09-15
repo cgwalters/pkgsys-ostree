@@ -48,16 +48,16 @@ pkgsys_ostree_builtin_make_tree (int argc, char **argv, GFile *repo_path, GCance
     goto out;
 
   repo = ostree_repo_new (repo_path);
-  if (!ostree_repo_check (repo, error))
-    goto out;
+  /* if (!ostree_repo_check (repo, error)) */
+  /*   goto out; */
 
-  if (argc <= 2)
-    {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "A REF argument and at least one package is required");
-      goto out;
-    }
-  ref = argv[1];
+  /* if (argc <= 2) */
+  /*   { */
+  /*     g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, */
+  /*                  "A REF argument and at least one package is required"); */
+  /*     goto out; */
+  /*   } */
+  /* ref = argv[1]; */
  
   ret = TRUE;
  out:

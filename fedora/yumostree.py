@@ -28,7 +28,7 @@ from gi.repository import GLib
 from gi.repository import Gio
 from gi.repository import OSTree
 
-srcdir = os.path.dirname(sys.argv[0])
+os_release_data = {}
 
 def ensuredir(path):
     if not os.path.isdir(path):
@@ -43,78 +43,19 @@ def feed_checksum(checksum, stream):
         checksum.update(b)
         b = stream.read(8192)
 
-def main():
-    parser = optparse.OptionParser('%prog COMMIT PACKAGE1 [PACKAGE2...]')
-    parser.add_option('', "--repo",
-                      action='store', dest='repo_path',
-                      default=None,
-                      help="Path to OSTree repository (default=/ostree)")
+def _find_current_origin_refspec():
+    dpath = '/ostree/deploy/%s/deploy' % (os_release_data['ID'], )
+    for name in os.listdir(dpath):
+        if name.endswith('.origin'):
+            for line in open(os.path.join(dpath, name)):
+                if line.startswith('refspec='):
+                    return line[len('refspec='):]
+    return None
 
-    (opts, args) = parser.parse_args(sys.argv[1:])
+def _find_current_root():
+    return '/ostree/deploy/%s/current' % (os_release_data['ID'], )
 
-    branchname = args[0]
-    packages = args[1:]
-    # Hardcoded, yes.
-    packages.extend(['ostree', 'kernel'])
-
-    f = open('/etc/os-release')
-    os_release_data = {}
-    for line in f.readlines():
-        if line == '': continue
-        (k,v) = line.split('=', 1)
-        os_release_data[k.strip()] = v.strip()
-    f.close()
-
-    if opts.repo_path is not None:
-        repo = OSTree.Repo.new(Gio.File.new_for_path(opts.repo_path))
-    else:
-        repo = OSTree.Repo.new_default()
-
-    repo.open(None)
-
-    cachedir = '/var/cache/yum-ostree/work'
-    ensuredir(cachedir)
-
-    yumroot = os.path.join(cachedir, 'yum')
-    targetroot = os.path.join(cachedir, 'rootfs')
-    yumcachedir = os.path.join(yumroot, 'var/cache/yum')
-    yumcache_lookaside = os.path.join(cachedir, 'yum-cache')
-    logs_lookaside = os.path.join(cachedir, 'logs')
-
-    osname = os_release_data['ID']
-    versionid = os_release_data['VERSION_ID']
-    
-    ref = '%s/%s/%s' % (osname, versionid, branchname)
-
-    print "Will create commit %s using packages %r" % (ref, packages)
-
-    shutil.rmtree(yumroot, ignore_errors=True)
-    if os.path.isdir(yumcache_lookaside):
-        yumroot_varcache = os.path.join(yumroot, 'var/cache')
-        print "Reusing cache: " + yumroot_varcache
-        ensuredir(yumroot_varcache)
-        subprocess.check_call(['cp', '-a', yumcache_lookaside, yumcachedir])
-    else:
-        print "No cache found at: " + yumroot_varcache
-
-    yumargs = ['yum', '-y', '--releasever=%s' % (versionid, ), '--nogpg', '--setopt=keepcache=1',
-               '--installroot=' + yumroot, '--disablerepo=*', '--enablerepo=fedora',
-               'install']
-    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
-    yumargs.extend(packages)
-    subprocess.check_call(yumargs)
-
-    # Attempt to cache stuff between runs
-    rmrf(yumcache_lookaside)
-    print "Saving yum cache " + yumcache_lookaside
-    os.rename(yumcachedir, yumcache_lookaside)
-
-    yumroot_rpmlibdir = os.path.join(yumroot, 'var/lib/rpm')
-    rpmtextlist = os.path.join(cachedir, 'rpm-manifest.txt')
-    manifest = subprocess.check_call(['rpm', '-qa', '--dbpath=' + yumroot_rpmlibdir],
-                                     stdout=open(rpmtextlist, 'w'))
-
-    rmrf(targetroot)
+def _initfs(targetroot):
     os.makedirs(targetroot)
     for d in ['dev', 'proc', 'run', 'sys', 'var']:
         os.mkdir(os.path.join(targetroot, d))
@@ -132,6 +73,19 @@ def main():
                            ('sysroot/ostree', 'ostree'),
                            ('sysroot/tmp', 'tmp')]:
         os.symlink(target, os.path.join(targetroot, name))
+
+
+def _clone_current_root_to_yumroot(current_root, yumroot):
+    _initfs(yumroot)
+    subprocess.check_call(['cp', '--reflink=auto', '-a',
+                           os.path.join(current_root, 'usr'),
+                           yumroot])
+                           
+
+def _create_rootfs_from_yumroot_content(targetroot, yumroot):
+    """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
+
+    _initfs(targetroot)
 
     # We take /usr from the yum content
     os.rename(os.path.join(yumroot, 'usr'), os.path.join(targetroot, 'usr'))
@@ -179,13 +133,105 @@ def main():
 
     target_tmpfilesd = os.path.join(targetroot, 'usr/lib/tmpfiles.d')
     ensuredir(target_tmpfilesd)
-    shutil.copy(os.path.join(srcdir, 'tmpfiles-gnome-ostree.conf'), target_tmpfilesd)
+    shutil.copy(os.path.join(PKGLIBDIR, 'tmpfiles-gnome-ostree.conf'), target_tmpfilesd)
 
-    # All directories should be u=rwx,g=rx,og=rx so that ostree is
-    # allowed to modify them.
-    for x in ['usr', 'boot']:
-        subprocess.check_call(['find', os.path.join(targetroot, x),
-                               '-type', 'd', '-exec', 'chmod', 'u=rwx,g=rx,og=rx', '{}', ';'])
+def main():
+    parser = optparse.OptionParser('%prog ACTION PACKAGE1 [PACKAGE2...]')
+    parser.add_option('', "--repo",
+                      action='store', dest='repo_path',
+                      default=None,
+                      help="Path to OSTree repository (default=/ostree)")
+    parser.add_option('', "--local-ostree-package",
+                      action='store', dest='local_ostree_package',
+                      default='ostree',
+                      help="Path to local OSTree RPM")
+
+    (opts, args) = parser.parse_args(sys.argv[1:])
+
+    f = open('/etc/os-release')
+    for line in f.readlines():
+        if line == '': continue
+        (k,v) = line.split('=', 1)
+        os_release_data[k.strip()] = v.strip()
+    f.close()
+
+    action = args[0]
+    if action == 'create':
+        branchname = args[1]
+        ref = '%s/%s/%s' % (os_release_data['ID'], os_release_data['VERSION_ID'], branchname)
+        packages = args[2:]
+    elif action == 'install':
+        packages = args[1:]
+        ref = _find_current_origin_refspec()
+    elif action == 'upgrade':
+        packages = []
+        ref = _find_current_origin_refspec()
+    else:
+        print >>sys.stderr, "Unknown action %s" % (action, )
+        sys.exit(1)
+
+    # Hardcoded, yes.
+    packages.append('kernel')
+    packages.append(opts.local_ostree_package)
+
+    if opts.repo_path is not None:
+        repo = OSTree.Repo.new(Gio.File.new_for_path(opts.repo_path))
+    else:
+        repo = OSTree.Repo.new_default()
+
+    repo.open(None)
+
+    cachedir = '/var/cache/yum-ostree/work'
+    ensuredir(cachedir)
+
+    yumroot = os.path.join(cachedir, 'yum')
+    targetroot = os.path.join(cachedir, 'rootfs')
+    yumcachedir = os.path.join(yumroot, 'var/cache/yum')
+    yumcache_lookaside = os.path.join(cachedir, 'yum-cache')
+    logs_lookaside = os.path.join(cachedir, 'logs')
+
+    print "Will create commit %s using packages %r" % (ref, packages)
+
+    shutil.rmtree(yumroot, ignore_errors=True)
+    if action == 'create':
+        if os.path.isdir(yumcache_lookaside):
+            yumroot_varcache = os.path.join(yumroot, 'var/cache')
+            print "Reusing cache: " + yumroot_varcache
+            ensuredir(yumroot_varcache)
+            subprocess.check_call(['cp', '-a', yumcache_lookaside, yumcachedir])
+        else:
+            print "No cache found at: " + yumroot_varcache
+    else:
+        current_root = _find_current_root()
+        print "Cloning %s" % (current_root, )
+        _clone_current_root_to_yumroot(current_root, yumroot)
+
+    if action == 'create':
+        yumargs = ['yum', '-y', '--releasever=%s' % (os_release_data['VERSION_ID'], ), '--nogpg', '--setopt=keepcache=1',
+                '--installroot=' + yumroot, '--disablerepo=*', '--enablerepo=fedora', 'install']
+    elif action == 'upgrade':
+        yumargs = ['yum', '--installroot=' + yumroot, 'upgrade']
+    elif action == 'install':
+        yumargs = ['yum', '--installroot=' + yumroot, 'install']
+    else:
+        assert False
+    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
+    yumargs.extend(packages)
+    subprocess.check_call(yumargs)
+
+    if action == 'create':
+        # Attempt to cache stuff between runs
+        rmrf(yumcache_lookaside)
+        print "Saving yum cache " + yumcache_lookaside
+        os.rename(yumcachedir, yumcache_lookaside)
+
+    yumroot_rpmlibdir = os.path.join(yumroot, 'var/lib/rpm')
+    rpmtextlist = os.path.join(cachedir, 'rpm-manifest.txt')
+    manifest = subprocess.check_call(['rpm', '-qa', '--dbpath=' + yumroot_rpmlibdir],
+                                     stdout=open(rpmtextlist, 'w'))
+
+    rmrf(targetroot)
+    _create_rootfs_from_yumroot_content(targetroot, yumroot)
 
     # Move the log files out
     rmrf(logs_lookaside)
@@ -215,5 +261,7 @@ def main():
 
     rmrf(yumroot)
     rmrf(targetroot)
+
+    subprocess.check_call(['ostree', 'admin', 'deploy', '--os=' + os_release_data['ID'], ref])
 
 main()
