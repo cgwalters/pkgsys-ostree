@@ -87,5 +87,14 @@ dist-snapshot:
 	  rm submodule.tar; \
 	done; \
 	mv $(PACKAGE)-$${GITVERSION}.tar{.tmp,}; \
+	rm -f $(PACKAGE)-$${GITVERSION}.tar.xz; \
 	xz $(PACKAGE)-$${GITVERSION}.tar 
 
+srpm: dist-snapshot
+	GITVERSION=$(git_version_rpm); export GITVERSION; \
+	sed -e "s,^Version:,Version: $${GITVERSION}," < $(srcdir)/packages/$(PACKAGE).spec.in > $(PACKAGE).spec
+	$(srcdir)/packages/rpmbuild-cwd -bs $(PACKAGE).spec
+
+rpm-local: srpm
+	GITVERSION=$(git_version_rpm); export GITVERSION; \
+	$(srcdir)/packages/rpmbuild-cwd --rebuild $(PACKAGE)-${GITVERSION}*.src.rpm

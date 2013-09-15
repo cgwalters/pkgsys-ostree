@@ -90,7 +90,8 @@ def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     # We take /usr from the yum content
     os.rename(os.path.join(yumroot, 'usr'), os.path.join(targetroot, 'usr'))
     # Plus the RPM database goes in usr/share/rpm
-    os.rename(os.path.join(yumroot, 'var/lib/rpm'), os.path.join(targetroot, 'usr/share/rpm'))
+    legacyrpm_path = os.path.join(yumroot, 'var/lib/rpm')
+    os.rename(legacyrpm_path, os.path.join(targetroot, 'usr/share/rpm'))
 
     # Except /usr/local -> ../var/usrlocal
     rmrf(os.path.join(targetroot, 'usr/local'))

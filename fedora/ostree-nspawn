@@ -1,4 +1,4 @@
-# Makefile for Fedora
+#!/usr/bin/env sh
 #
 # Copyright (C) 2013 Colin Walters <walters@verbum.org>
 #
@@ -17,15 +17,8 @@
 # Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 # Boston, MA 02111-1307, USA.
 
-bin_SCRIPTS += yum-ostree fedora/ostree-nspawn
+root=$1
+deploydir=$(dirname $root)
+osgroupdir=$(dirname $deploydir)
 
-yum-ostree: fedora/yum-ostree.in Makefile
-	$(AM_V_GEN) sed -e s,@PYTHON\@,$(PYTHON), -e s,@pkglibdir\@,$(pkglibdir), $< > $@.tmp && mv $@.tmp $@
-	@chmod a+x $@
-
-pyyumostreedir = $(pkglibdir)/yum-ostree
-pyyumostree_DATA = fedora/yumostree.py \
-	$(NULL)
-
-privdatadir=$(pkglibdir)
-privdata_DATA = fedora/tmpfiles-gnome-ostree.conf
+exec systemd-nspawn --bind=${osgroupdir}/var:/var --bind=/:/sysroot --bind-ro=${root}/usr:/usr -D ${root}
