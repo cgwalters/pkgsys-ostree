@@ -36,22 +36,14 @@ PKG_CHECK_MODULES(PKGDEP_OSTREE, [ostree-1])
 GTK_DOC_CHECK([1.15], [--flavour no-tmpl])
 AC_PATH_PROG([XSLTPROC], [xsltproc])
 
-dnl AC_ARG_WITH([backend],
-dnl             AS_HELP_STRING([--with-backend=BACKEND], [Choose BACKEND as package system (currently supported: yum)]),
-dnl             [],
-dnl             AC_MSG_ERROR([--with-backend=BACKEND must be provided]))
-dnl AS_IF([test x$with_backend = xyum], [],
-dnl   [ AC_MSG_ERROR([Unrecognized --with-backend=$with_backend])])
+AC_ARG_WITH([backend],
+            AS_HELP_STRING([--with-backend=BACKEND], [Choose BACKEND as package system (currently supported: yum)]),
+            [],
+            AC_MSG_ERROR([--with-backend=BACKEND must be provided]))
+AS_IF([test x$with_backend = xyum], [],
+  [ AC_MSG_ERROR([Unrecognized --with-backend=$with_backend])])
 AM_CONDITIONAL(BUILDOPT_BACKEND_YUM, test x$with_backend = xyum)
 AS_IF([test x$with_backend = xyum], [ AM_PATH_PYTHON(2.7)])
-
-AC_ARG_WITH([systemdsystemunitdir],
-            AS_HELP_STRING([--with-systemdsystemunitdir=DIR], [Directory for systemd service files]),
-            [],
-            [with_systemdsystemunitdir=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)])
-AS_IF([test "x$with_systemdsystemunitdir" != "xno"], [
-  AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
-])
 
 AC_CONFIG_FILES([
 Makefile
@@ -59,5 +51,5 @@ Makefile
 AC_OUTPUT
 
 echo "
-    fedora-ostree $VERSION
+    pkgsys-ostree $VERSION
 "
