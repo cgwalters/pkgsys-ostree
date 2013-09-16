@@ -21,4 +21,4 @@ root=$1
 deploydir=$(dirname $root)
 osgroupdir=$(dirname $deploydir)
 
-exec systemd-nspawn --bind=${osgroupdir}/var:/var --bind=/:/sysroot --bind-ro=${root}/usr:/usr -D ${root}
+exec systemd-nspawn --bind=${osgroupdir}/var:/var --bind=/:/sysroot  --bind=/boot:/boot --bind-ro=${root}/usr:/usr -D ${root} "$@"

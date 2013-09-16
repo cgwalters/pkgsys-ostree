@@ -52,9 +52,6 @@ def _find_current_origin_refspec():
                     return line[len('refspec='):]
     return None
 
-def _find_current_root():
-    return '/ostree/deploy/%s/current' % (os_release_data['ID'], )
-
 def _initfs(targetroot):
     os.makedirs(targetroot)
     for d in ['dev', 'proc', 'run', 'sys', 'var']:
@@ -75,12 +72,15 @@ def _initfs(targetroot):
         os.symlink(target, os.path.join(targetroot, name))
 
 
-def _clone_current_root_to_yumroot(current_root, yumroot):
+def _clone_current_root_to_yumroot(yumroot):
     _initfs(yumroot)
-    for d in ['usr', 'etc', 'var']:
+    for d in ['boot', 'usr', 'etc', 'var/lib/rpm', 'var/cache/yum']:
+        destdir = os.path.join(yumroot, d)
+        rmrf(destdir)
+        ensuredir(os.path.dirname(destdir))
         subprocess.check_call(['cp', '--reflink=auto', '-a',
-                               os.path.join(current_root, d),
-                               yumroot])
+                               '/' + d,
+                               destdir])
 
 def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
@@ -91,11 +91,15 @@ def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     os.rename(os.path.join(yumroot, 'usr'), os.path.join(targetroot, 'usr'))
     # Plus the RPM database goes in usr/share/rpm
     legacyrpm_path = os.path.join(yumroot, 'var/lib/rpm')
-    os.rename(legacyrpm_path, os.path.join(targetroot, 'usr/share/rpm'))
+    newrpm_path = os.path.join(targetroot, 'usr/share/rpm')
+    if not os.path.isdir(newrpm_path):
+        os.rename(legacyrpm_path, newrpm_path)
 
     # Except /usr/local -> ../var/usrlocal
-    rmrf(os.path.join(targetroot, 'usr/local'))
-    os.symlink('../var/usrlocal', os.path.join(targetroot, 'usr/local'))
+    target_usrlocal = os.path.join(targetroot, 'usr/local')
+    if not os.path.islink(target_usrlocal):
+        rmrf(target_usrlocal)
+        os.symlink('../var/usrlocal', target_usrlocal)
     target_usretc = os.path.join(targetroot, 'usr/etc')
     rmrf(target_usretc)
     os.rename(os.path.join(yumroot, 'etc'), target_usretc)
@@ -197,9 +201,10 @@ def main():
         else:
             print "No cache found at: " + yumroot_varcache
     else:
-        current_root = _find_current_root()
-        print "Cloning %s" % (current_root, )
-        _clone_current_root_to_yumroot(current_root, yumroot)
+        print "Cloning active root"
+        _clone_current_root_to_yumroot(yumroot)
+        print "...done"
+        time.sleep(3)
 
     if action == 'create':
         yumargs = ['yum', '-y', '--releasever=%s' % (os_release_data['VERSION_ID'], ), '--nogpg', '--setopt=keepcache=1',
@@ -207,10 +212,13 @@ def main():
         # Hardcoded, yes.
         packages.append('kernel')
         packages.append(opts.local_ostree_package)
+        commit_message = 'create %r' % (packages, )
     elif action == 'upgrade':
         yumargs = ['yum', '--installroot=' + yumroot, 'upgrade']
+        commit_message = 'upgrade'
     elif action == 'install':
         yumargs = ['yum', '--installroot=' + yumroot, 'install']
+        commit_message = 'install %r' % (packages, )
     else:
         assert False
     print "Running: %s" % (subprocess.list2cmdline(yumargs), )
@@ -251,7 +259,7 @@ def main():
                                   mtree, modifier, None)
     [success, parent] = repo.resolve_rev(ref, True)
     [success, tree] = repo.write_mtree(mtree, None)
-    [success, commit] = repo.write_commit(parent, '', '', None, tree, None)
+    [success, commit] = repo.write_commit(parent, '', commit_message, None, tree, None)
     repo.transaction_set_ref(None, ref, commit)
     repo.commit_transaction(None)
 
