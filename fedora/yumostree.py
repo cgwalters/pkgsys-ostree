@@ -146,6 +146,22 @@ def main():
                       action='store', dest='repo_path',
                       default=None,
                       help="Path to OSTree repository (default=/ostree)")
+    parser.add_option('', "--deploy",
+                      action='store_true',
+                      default=False,
+                      help="Do a deploy if true")
+    parser.add_option('', "--os",
+                      action='store', dest='os',
+                      default=None,
+                      help="OS Name (default from /etc/os-release)")
+    parser.add_option('', "--os-version",
+                      action='store', dest='os_version',
+                      default=None,
+                      help="OS version (default from /etc/os-release)")
+    parser.add_option('', "--enablerepo",
+                      action='append', dest='enablerepo',
+                      default=[],
+                      help="Enable this yum repo")
     parser.add_option('', "--local-ostree-package",
                       action='store', dest='local_ostree_package',
                       default='ostree',
@@ -153,17 +169,26 @@ def main():
 
     (opts, args) = parser.parse_args(sys.argv[1:])
 
-    f = open('/etc/os-release')
-    for line in f.readlines():
-        if line == '': continue
-        (k,v) = line.split('=', 1)
-        os_release_data[k.strip()] = v.strip()
-    f.close()
+    if (opts.os is None or
+        opts.os_version is None):
+        f = open('/etc/os-release')
+        for line in f.readlines():
+            if line == '': continue
+            (k,v) = line.split('=', 1)
+            os_release_data[k.strip()] = v.strip()
+        f.close()
+
+    if opts.os is None:
+        opts.os = os_release_data['ID']
+    if opts.os_version is None:
+        opts.os_version = os_release_data['VERSION_ID']
+
+    print "Targeting os=%s version=%s" % (opts.os, opts.os_version)
 
     action = args[0]
     if action == 'create':
         branchname = args[1]
-        ref = '%s/%s/%s' % (os_release_data['ID'], os_release_data['VERSION_ID'], branchname)
+        ref = '%s/%s/%s' % (opts.os, opts.os_version, branchname)
         packages = args[2:]
     elif action == 'install':
         packages = args[1:]
@@ -193,8 +218,8 @@ def main():
 
     shutil.rmtree(yumroot, ignore_errors=True)
     if action == 'create':
+        yumroot_varcache = os.path.join(yumroot, 'var/cache')
         if os.path.isdir(yumcache_lookaside):
-            yumroot_varcache = os.path.join(yumroot, 'var/cache')
             print "Reusing cache: " + yumroot_varcache
             ensuredir(yumroot_varcache)
             subprocess.check_call(['cp', '-a', yumcache_lookaside, yumcachedir])
@@ -206,23 +231,24 @@ def main():
         print "...done"
         time.sleep(3)
 
+    yumargs = ['yum', '-y', '--releasever=%s' % (opts.os_version, ), '--nogpg', '--setopt=keepcache=1', '--installroot=' + yumroot, '--disablerepo=*']
+    yumargs.extend(map(lambda x: '--enablerepo=' + x, opts.enablerepo))
     if action == 'create':
-        yumargs = ['yum', '-y', '--releasever=%s' % (os_release_data['VERSION_ID'], ), '--nogpg', '--setopt=keepcache=1',
-                '--installroot=' + yumroot, '--disablerepo=*', '--enablerepo=fedora', 'install']
+        yumargs.append('install')
         # Hardcoded, yes.
         packages.append('kernel')
         packages.append(opts.local_ostree_package)
         commit_message = 'create %r' % (packages, )
     elif action == 'upgrade':
-        yumargs = ['yum', '--installroot=' + yumroot, 'upgrade']
+        yumargs.append('upgrade')
         commit_message = 'upgrade'
     elif action == 'install':
-        yumargs = ['yum', '--installroot=' + yumroot, 'install']
+        yumargs.append('install')
         commit_message = 'install %r' % (packages, )
     else:
         assert False
-    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
     yumargs.extend(packages)
+    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
     subprocess.check_call(yumargs)
 
     if action == 'create':
@@ -268,4 +294,5 @@ def main():
     rmrf(yumroot)
     rmrf(targetroot)
 
-    subprocess.check_call(['ostree', 'admin', 'deploy', '--os=' + os_release_data['ID'], ref])
+    if opts.deploy:
+        subprocess.check_call(['ostree', 'admin', 'deploy', '--os=' + opts.os, ref])
