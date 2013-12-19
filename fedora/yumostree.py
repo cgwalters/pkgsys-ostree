@@ -18,6 +18,7 @@
 # Boston, MA 02111-1307, USA.
 
 import os
+import re
 import sys
 import optparse
 import time
@@ -82,6 +83,26 @@ def _clone_current_root_to_yumroot(yumroot):
                                '/' + d,
                                destdir])
 
+def replace_nsswitch(target_usretc):
+    nsswitch_conf = os.path.join(target_usretc, 'nsswitch.conf')
+    f = open(nsswitch_conf)
+    newf = open(nsswitch_conf + '.tmp', 'w')
+    passwd_re = re.compile(r'^passwd:\s+files(.*)$')
+    group_re = re.compile(r'^group:\s+files(.*)$')
+    for line in f:
+        match = passwd_re.match(line)
+        if match and line.find('altfiles') == -1:
+            newf.write('passwd: files altfiles' + match.group(1) + '\n')
+            continue
+        match = group_re.match(line)
+        if match and line.find('altfiles') == -1:
+            newf.write('group: files altfiles' + match.group(1) + '\n')
+            continue
+        newf.write(line)
+    f.close()
+    newf.close()
+    os.rename(nsswitch_conf + '.tmp', nsswitch_conf)
+
 def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
 
@@ -103,6 +124,8 @@ def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     target_usretc = os.path.join(targetroot, 'usr/etc')
     rmrf(target_usretc)
     os.rename(os.path.join(yumroot, 'etc'), target_usretc)
+
+    replace_nsswitch(target_usretc)
 
     # Move boot, but rename the kernel/initramfs to have a checksum
     targetboot = os.path.join(targetroot, 'boot')
