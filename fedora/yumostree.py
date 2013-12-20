@@ -30,6 +30,8 @@ from gi.repository import Gio
 from gi.repository import OSTree
 
 os_release_data = {}
+opts = None
+args = None
 
 def ensuredir(path):
     if not os.path.isdir(path):
@@ -103,6 +105,57 @@ def replace_nsswitch(target_usretc):
     newf.close()
     os.rename(nsswitch_conf + '.tmp', nsswitch_conf)
 
+def do_kernel_prep(yumroot):
+    bootdir = os.path.join(yumroot, 'boot')
+    kernel_path = None
+    for name in os.listdir(bootdir):
+        if name.startswith('vmlinuz-'):
+            kernel_path = os.path.join(bootdir, name)
+            break
+        elif name.startswith('initramfs-'):
+            # If somehow the %post generated an initramfs, blow it
+            # away - we take over that role.
+            initramfs_path = os.path.join(bootdir, name)
+            print "Removing RPM-generated " + initramfs_path
+            rmrf(initramfs_path)
+
+    if kernel_path is None:
+        raise ValueError("Failed to find vmlinuz- in " + yum_boot)
+
+    kname = os.path.basename(kernel_path)
+    kver = kname[kname.find('-') + 1:]
+    print "Kernel version is " + kver
+           
+    # OSTree will take care of this
+    loaderdir = os.path.join(bootdir, 'loader')
+    rmrf(loaderdir)
+
+    args = ['chroot', yumroot, 'depmod', kver]
+    print "Running: %s" % (subprocess.list2cmdline(args), )
+    subprocess.check_call(args)
+
+    # Copy of code from gnome-continuous; yes, we hardcode
+    # the machine id for now, because distributing pre-generated
+    # initramfs images with dracut/systemd at the moment
+    # effectively requires this.
+    # http://lists.freedesktop.org/archives/systemd-devel/2013-July/011770.html
+    print "Hardcoding machine-id"
+    f = open(os.path.join(yumroot, 'etc', 'machine-id'), 'w')
+    f.write('45bb3b96146aa94f299b9eb43646eb35\n')
+    f.close()
+
+    args = ['chroot', yumroot,
+            'dracut', '--tmpdir=/tmp',
+            '-f', '/tmp/initramfs.img', kver];
+    print "Running: %s" % (subprocess.list2cmdline(args), )
+    subprocess.check_call(args)
+    
+    initramfs_path = os.path.join(yumroot, 'tmp', 'initramfs.img')
+    if not os.path.exists(initramfs_path):
+        raise ValueError("Failed to find " + initramfs_path)
+
+    os.rename(initramfs_path, os.path.join(bootdir, 'initramfs-yumostree.img'))
+    
 def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
 
@@ -124,8 +177,6 @@ def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     target_usretc = os.path.join(targetroot, 'usr/etc')
     rmrf(target_usretc)
     os.rename(os.path.join(yumroot, 'etc'), target_usretc)
-
-    replace_nsswitch(target_usretc)
 
     # Move boot, but rename the kernel/initramfs to have a checksum
     targetboot = os.path.join(targetroot, 'boot')
@@ -163,6 +214,19 @@ def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     ensuredir(target_tmpfilesd)
     shutil.copy(os.path.join(PKGLIBDIR, 'tmpfiles-gnome-ostree.conf'), target_tmpfilesd)
 
+def yuminstall(yumroot, packages):
+    yumargs = ['yum', '-y', '--releasever=%s' % (opts.os_version, ), '--nogpg', '--setopt=keepcache=1', '--installroot=' + yumroot, '--disablerepo=*']
+    yumargs.extend(map(lambda x: '--enablerepo=' + x, opts.enablerepo))
+    yumargs.append('install')
+    yumargs.extend(packages)
+    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
+    yum_env = dict(os.environ)
+    yum_env['KERNEL_INSTALL_NOOP'] = 'yes'
+    proc = subprocess.Popen(yumargs, env=yum_env)
+    rcode = proc.wait()
+    if rcode != 0:
+        raise ValueError("Yum exited with code %d" % (rcode, ))
+
 def main():
     parser = optparse.OptionParser('%prog ACTION PACKAGE1 [PACKAGE2...]')
     parser.add_option('', "--repo",
@@ -173,6 +237,10 @@ def main():
                       action='store_true',
                       default=False,
                       help="Do a deploy if true")
+    parser.add_option('', "--breakpoint",
+                      action='store',
+                      default=None,
+                      help="Stop at given phase")
     parser.add_option('', "--os",
                       action='store', dest='os',
                       default=None,
@@ -190,6 +258,8 @@ def main():
                       default='ostree',
                       help="Path to local OSTree RPM")
 
+    global opts
+    global args
     (opts, args) = parser.parse_args(sys.argv[1:])
 
     if (opts.os is None or
@@ -213,12 +283,7 @@ def main():
         branchname = args[1]
         ref = '%s/%s/%s' % (opts.os, opts.os_version, branchname)
         packages = args[2:]
-    elif action == 'install':
-        packages = args[1:]
-        ref = _find_current_origin_refspec()
-    elif action == 'upgrade':
-        packages = []
-        ref = _find_current_origin_refspec()
+        commit_message = 'Commit of %d packages' % (len(packages), )
     else:
         print >>sys.stderr, "Unknown action %s" % (action, )
         sys.exit(1)
@@ -254,31 +319,32 @@ def main():
         print "...done"
         time.sleep(3)
 
-    yumargs = ['yum', '-y', '--releasever=%s' % (opts.os_version, ), '--nogpg', '--setopt=keepcache=1', '--installroot=' + yumroot, '--disablerepo=*']
-    yumargs.extend(map(lambda x: '--enablerepo=' + x, opts.enablerepo))
-    if action == 'create':
-        yumargs.append('install')
-        # Hardcoded, yes.
-        packages.append('kernel')
-        packages.append(opts.local_ostree_package)
-        commit_message = 'create %r' % (packages, )
-    elif action == 'upgrade':
-        yumargs.append('upgrade')
-        commit_message = 'upgrade'
-    elif action == 'install':
-        yumargs.append('install')
-        commit_message = 'install %r' % (packages, )
-    else:
-        assert False
-    yumargs.extend(packages)
-    print "Running: %s" % (subprocess.list2cmdline(yumargs), )
-    subprocess.check_call(yumargs)
+    # Ensure we have enough to modify NSS
+    yuminstall(yumroot, ['filesystem', 'glibc', 'nss-altfiles'])
 
-    if action == 'create':
-        # Attempt to cache stuff between runs
-        rmrf(yumcache_lookaside)
-        print "Saving yum cache " + yumcache_lookaside
-        os.rename(yumcachedir, yumcache_lookaside)
+    if opts.breakpoint == 'post-yum-phase1':
+        return
+    
+    # Prepare NSS configuration; this needs to be done
+    # before any invocations of "useradd" in %post
+    for n in ['passwd', 'group']:
+        open(os.path.join(yumroot, 'usr/lib', n), 'w').close()
+    replace_nsswitch(os.path.join(yumroot, 'etc'))
+
+    yuminstall(yumroot, packages)
+
+    if opts.breakpoint == 'post-yum-phase2':
+        return
+
+    do_kernel_prep(yumroot)
+
+    if opts.breakpoint == 'post-yum':
+        return
+
+    # Attempt to cache stuff between runs
+    rmrf(yumcache_lookaside)
+    print "Saving yum cache " + yumcache_lookaside
+    os.rename(yumcachedir, yumcache_lookaside)
 
     yumroot_rpmlibdir = os.path.join(yumroot, 'var/lib/rpm')
     rpmtextlist = os.path.join(cachedir, 'rpm-manifest.txt')
