@@ -105,7 +105,7 @@ def replace_nsswitch(target_usretc):
     newf.close()
     os.rename(nsswitch_conf + '.tmp', nsswitch_conf)
 
-def do_kernel_prep(yumroot):
+def do_kernel_prep(yumroot, logs_lookaside):
     bootdir = os.path.join(yumroot, 'boot')
     kernel_path = None
     for name in os.listdir(bootdir):
@@ -145,7 +145,7 @@ def do_kernel_prep(yumroot):
     f.close()
 
     args = ['chroot', yumroot,
-            'dracut', '--tmpdir=/tmp',
+            'dracut', '-v', '--tmpdir=/tmp',
             '-f', '/tmp/initramfs.img', kver];
     print "Running: %s" % (subprocess.list2cmdline(args), )
     subprocess.check_call(args)
@@ -155,6 +155,9 @@ def do_kernel_prep(yumroot):
         raise ValueError("Failed to find " + initramfs_path)
 
     os.rename(initramfs_path, os.path.join(bootdir, 'initramfs-yumostree.img'))
+    varlog_dracut_path = os.path.join(yumroot, 'var', 'log', 'dracut.log')
+    if os.path.exists(varlog_dracut_path):
+        os.rename(varlog_dracut_path, os.path.join(logs_lookaside, 'dracut.log'))
     
 def _create_rootfs_from_yumroot_content(targetroot, yumroot):
     """Prepare a root filesystem, taking mainly the contents of /usr from yumroot"""
@@ -304,6 +307,9 @@ def main():
     yumcache_lookaside = os.path.join(cachedir, 'yum-cache')
     logs_lookaside = os.path.join(cachedir, 'logs')
 
+    rmrf(logs_lookaside)
+    ensuredir(logs_lookaside)
+
     shutil.rmtree(yumroot, ignore_errors=True)
     if action == 'create':
         yumroot_varcache = os.path.join(yumroot, 'var/cache')
@@ -336,7 +342,7 @@ def main():
     if opts.breakpoint == 'post-yum-phase2':
         return
 
-    do_kernel_prep(yumroot)
+    do_kernel_prep(yumroot, logs_lookaside)
 
     if opts.breakpoint == 'post-yum':
         return
@@ -354,9 +360,6 @@ def main():
     rmrf(targetroot)
     _create_rootfs_from_yumroot_content(targetroot, yumroot)
 
-    # Move the log files out
-    rmrf(logs_lookaside)
-    ensuredir(logs_lookaside)
     yumroot_varlog = os.path.join(yumroot, 'var/log')
     for name in os.listdir(yumroot_varlog):
         shutil.move(os.path.join(yumroot_varlog, name), logs_lookaside)
